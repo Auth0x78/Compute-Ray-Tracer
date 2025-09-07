@@ -28,6 +28,7 @@ The project is actively under development. Many features are still being impleme
 * [ ] UI for scene configuration
 
 ## Screenshots
+<img width="518" height="556" alt="image" src="https://github.com/user-attachments/assets/36db633e-d1f3-430a-b6c0-993e0437db5c" />
 
 
 ## Installation
