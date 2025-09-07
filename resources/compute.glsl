@@ -1,7 +1,7 @@
 #version 440 
 
 // CONSTANTS
-#define RAYS_PER_PIXEL 128
+#define RAYS_PER_PIXEL 32
 const float inf = 1. / 0.;
 
 // Thanks to Sebastian-Lague for shader
