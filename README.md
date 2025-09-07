@@ -52,16 +52,10 @@ make
 ## Usage
 
 ```
-./ComputeRayTracer scene.obj output.png
+./ComputeRayTracer
 ```
 
-* `scene.obj` – Path to your 3D model file.
-* `output.png` – Output image file.
-
-Optional flags:
-
-* `--width <pixels>`: Set image width (default: 800)
-* `--height <pixels>`: Set image height (default: 600)
+* Program will the Path to your 3D model file.
 
 ## Project Structure
 
@@ -70,9 +64,8 @@ Compute-Ray-Tracer/
 │
 ├─ src/                # Source code  
 ├─include/             # Header files  
-├─shaders/             # Compute shader files  
-├─models/              # Sample 3D models  
-├─docs/                # Screenshots and documentation  
+├─resource/            # Contains shader files
+├─models/              # Sample 3D models
 └─CMakeLists.txt       # Build configuration
 ```
 
