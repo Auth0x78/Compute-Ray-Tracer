@@ -338,18 +338,17 @@ int LoadModel(const char *modelPath, std::string internalModelName) {
   // TODO:
   // Give all model default RayTracingMaterial
   RayTracingMaterial &rtMat = g_modelsBuffer[modelIdx].material;
-  rtMat.color = glm::vec4(1.f, 1.f, 1.f, 0.f);
+  rtMat.color = glm::vec4(0.9f, 0.28f, 0.15f, 0.0f);
   rtMat.emissionColor = glm::vec4(0.0f);
   rtMat.specularColor = glm::vec4(1.0f);
 
   rtMat.emissionStrength = 0.0f;
-  rtMat.smoothness = 0.0f;
-  rtMat.specularProbability = 0.5f;
+  rtMat.smoothness = 0.45f;
+  rtMat.specularProbability = 0.8f;
 
   rtMat.flag = 0;
 
-  // TODO:
-  // Default Model position
+  // TODO: Default Model position, add support for model translation
   glm::mat4 &localToWorldMat = g_modelsBuffer[modelIdx].localToWorldMatrix;
 
   localToWorldMat = glm::mat4(1.0f);

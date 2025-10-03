@@ -105,10 +105,11 @@ const int UseSky = 1;
 const vec3 GroundColour = vec3(0.35, 0.3, 0.35);
 const vec3 SkyColourHorizon = vec3(1.0);
 const vec3 SkyColourZenith = vec3(0.38, 0.45, 0.8);
+const vec3 nonSkyAmbient = vec3(0.0);
 
 const vec3 SunDirection = normalize(vec3(0.8, 0.6, -0.1));
 const vec3 SunColor = vec3(1.0, 0.9, 0.6);
-const float SunIntensity = 10.0;
+const float SunIntensity = 5.0;
 const float SunFocus = 500.0;
 
 const int maxBounces = 3;
@@ -122,19 +123,16 @@ float DivergeStrength = 0.5;
 // Crude Sky color function for ambient light
 vec3 GetEnvironmentLight(vec3 dir) {
     if(UseSky == 0)
-        return vec3(0.0);
+        return nonSkyAmbient;
     uint state = 1;
     
-    // - float skyGradientT = pow(smoothstep(0.0, 0.4, dir.y), 0.35);
-    float skyGradientT = smoothstep(0.0, 0.4, dir.y); // removes pow for slight perf gain
+    float skyGradientT = pow(smoothstep(0.0, 0.4, dir.y), 0.35);
     float groundToSkyT = smoothstep(-0.01, 0.0, dir.y);
     
     vec3 skyGradient = mix(SkyColourHorizon, SkyColourZenith, skyGradientT);
 
-    // float sun = pow(max(0, dot(dir, SunDirection)), SunFocus) * SunIntensity;
-    float sun = clamp(dot(dir, SunDirection), 0.0, 1.0);
-    sun = pow(sun, SunFocus) * SunIntensity;
-
+    float sun = pow(max(0, dot(dir, SunDirection)), SunFocus) * SunIntensity;
+    
     // Combine all 3
     vec3 composite = mix(GroundColour, skyGradient, groundToSkyT) + sun * SunColor * float(groundToSkyT >= 1);
 
