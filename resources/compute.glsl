@@ -74,9 +74,9 @@ struct ModelHitInfo {
 };
 
 // Shader Inputs
-// TODO: Allocate a large enough buffer and take count as param and only update needed data from cpu side
 layout (rgba32f, binding = 0) uniform image2D outputImage;
 
+// TODO: Allocate a large enough buffer and take count as param and only update needed data from cpu side
 // Scene Data SSBOs
 layout (std430, binding = 1) buffer ModelsBuffer {
     Model ModelInfo[];
@@ -93,16 +93,14 @@ layout (std430, binding = 3) buffer TrianglesBuffer {
 shared vec3 ccontrib[RAYS_PER_PIXEL]; // store per-thread contribution
 
 // Shader uniforms
-
+uniform mat4 uInvViewMatrix;
+uniform mat4 uInvProjectionMatrix;
 uniform vec2 uResolution;
+uniform vec2 uInvResolution;
 uniform float uTime;
 uniform int uFrame;
 
 // Ray tracer property
-vec3 camPos = vec3(0.0, 0.0, 0.0);
-vec3 debugColor = vec3(1.0, 0.0, 1.0);
-float CameraZViewDir = -1.0;
-
 const int UseSky = 1;
 const vec3 GroundColour = vec3(0.35, 0.3, 0.35);
 const vec3 SkyColourHorizon = vec3(1.0);
@@ -117,26 +115,26 @@ const int maxBounces = 3;
 const float maxDist = 1e8;
 const float minDist = 1e-8;
 
-// For testing right now
-mat4 CamLocalToWorldMatrix = mat4(1.0);
-vec3 viewParams = vec3(2.0, 2.0, 1.0);
-vec3 _WorldSpaceCameraPos = CamLocalToWorldMatrix[3].xyz;
 // Camera settings
 float DefocusStrength = 1.0;
 float DivergeStrength = 0.5;
-
 
 // Crude Sky color function for ambient light
 vec3 GetEnvironmentLight(vec3 dir) {
     if(UseSky == 0)
         return vec3(0.0);
     uint state = 1;
-    float skyGradientT = pow(smoothstep(0.0, 0.4, dir.y), 0.35);
+    
+    // - float skyGradientT = pow(smoothstep(0.0, 0.4, dir.y), 0.35);
+    float skyGradientT = smoothstep(0.0, 0.4, dir.y); // removes pow for slight perf gain
     float groundToSkyT = smoothstep(-0.01, 0.0, dir.y);
     
     vec3 skyGradient = mix(SkyColourHorizon, SkyColourZenith, skyGradientT);
 
-    float sun = pow(max(0, dot(dir, SunDirection)), SunFocus) * SunIntensity;
+    // float sun = pow(max(0, dot(dir, SunDirection)), SunFocus) * SunIntensity;
+    float sun = clamp(dot(dir, SunDirection), 0.0, 1.0);
+    sun = pow(sun, SunFocus) * SunIntensity;
+
     // Combine all 3
     vec3 composite = mix(GroundColour, skyGradient, groundToSkyT) + sun * SunColor * float(groundToSkyT >= 1);
 
@@ -144,7 +142,7 @@ vec3 GetEnvironmentLight(vec3 dir) {
 }
 
 // Ray Intersection function
-TriangleHitInfo RayTriangle(Ray ray, Triangle tri) {
+TriangleHitInfo RayTriangle(in Ray ray, in Triangle tri) {
     vec3 edgeAB = tri.posB - tri.posA;
     vec3 edgeAC = tri.posC - tri.posA;
     vec3 normVec = cross(edgeAB, edgeAC);
@@ -170,7 +168,7 @@ TriangleHitInfo RayTriangle(Ray ray, Triangle tri) {
 }
 
 // Thanks to https://tavianator.com/2011/ray_box.html
-float RayBoundingBoxDst(Ray ray, vec3 boxMin, vec3 boxMax) {
+float RayBoundingBoxDst(in Ray ray, vec3 boxMin, vec3 boxMax) {
     vec3 tMin = (boxMin - ray.origin) * ray.invDir;
     vec3 tMax = (boxMax - ray.origin) * ray.invDir;
     vec3 t1 = min(tMin, tMax);
@@ -245,7 +243,7 @@ TriangleHitInfo RayTriangleBVH(inout Ray ray, float rayLength, int nodeOffset, i
     return result;
 }
 
-ModelHitInfo CalculateRayCollision(Ray worldRay) {
+ModelHitInfo CalculateRayCollision(in Ray worldRay) {
     ModelHitInfo result;
     result.didHit = false;
     result.dst = inf;
@@ -281,7 +279,7 @@ vec2 mod2(vec2 x, vec2 y) {
     return x - y * floor(x / y);
 }
 
-vec3 Trace(vec3 rayOrigin, vec3 rayDir, inout uint rngState) {
+vec3 Trace(in vec3 rayOrigin, in vec3 rayDir, inout uint rngState) {
     vec3 incomingLight = vec3(0.0);
     vec3 rayColor = vec3(1.0);
 
@@ -298,8 +296,7 @@ vec3 Trace(vec3 rayOrigin, vec3 rayDir, inout uint rngState) {
 
             // IDK, Seb's code had these flags so kept them
             // TODO: Understand what these flags do
-            if(material.flag == 1) 
-            {
+            if(material.flag == 1) {
                 vec2 c = mod2(floor(hitInfo.hitPoint.xy), vec2(2.0));
                 material.color = (c.x == c.y) ? material.color : material.emissionColor;
             }
@@ -335,41 +332,44 @@ vec3 Trace(vec3 rayOrigin, vec3 rayDir, inout uint rngState) {
     return incomingLight;
 }
 
-// BIG ASSUMPTION: I am assuming the i.uv in seb's code is from 0.0, 0.0(bot-left) to 1.0, 1.0(top-right)
 void main() {
     // Local Thread ID
     uint localThreadID = gl_LocalInvocationID.x;
 
     ivec2 pixelCoord = ivec2(gl_WorkGroupID.xy);
     int pixelIndex = pixelCoord.x + pixelCoord.y * int(uResolution.x);
-    vec2 uv = vec2(pixelCoord) / uResolution; 
+    vec2 uv = vec2(pixelCoord) * uInvResolution; 
 
     // Create a rngState
     uint rngState = pixelIndex + uFrame * 719393 + localThreadID * 16943;
-
-    // Calculate focal point
-    vec3 focusPointLocal = vec3(uv - vec2(0.5), 1.0) * viewParams;
-
-    // --- Transform focus point into world space ---
-    vec3 focusPoint = (CamLocalToWorldMatrix * vec4(focusPointLocal, 1.0)).xyz;
-     
-    // --- Extract camera right and up vectors ---
-    vec3 camRight = CamLocalToWorldMatrix[0].xyz; // Column 0
-    vec3 camUp = CamLocalToWorldMatrix[1].xyz; // Column 1
-
-    // Trace multiple rays and average together (done at last)
-    // Here, I have 32 threads running for each pixel, & 1 ray per thread
-    // So we will have overall 32 rays per pixel
     
-    // Calculate ray origin and direction
-    vec2 defocusJitter = RandomPointInCircle(rngState) * DefocusStrength / uResolution.x;
-    vec3 rayOrigin = _WorldSpaceCameraPos + camRight * defocusJitter.x + camUp * defocusJitter.y;
-    
-    // Jitter the focus point when calculating the ray direction to allow for blurring the image
-    // (at low strengths, this can be used for anti-aliasing)
-    vec2 jitter = RandomPointInCircle(rngState) * DivergeStrength / uResolution.x;
-    vec3 jitteredFocusPoint = focusPoint + camRight * jitter.x + camUp * jitter.y;
-    vec3 rayDir = normalize(jitteredFocusPoint - rayOrigin);
+    // --- Compute NDC coordinates ---
+    vec2 ndc = uv * 2.0 - 1.0; // Map uv from [0,1] to [-1,1]
+    vec4 clipPos = vec4(ndc, 1.0, 1.0); // z=1 for far plane
+
+    // --- Transform clip -> view space ---
+    vec4 viewPos = uInvProjectionMatrix * clipPos;
+    viewPos /= viewPos.w;
+
+    // --- Transform view -> world space ---
+    vec3 worldPos = (uInvViewMatrix * vec4(viewPos.xyz, 1.0)).xyz;
+
+    // --- Ray origin is camera position (from inverse view) ---
+    vec3 rayOrigin = uInvViewMatrix[3].xyz;
+
+    // --- Optional DOF / anti-aliasing jitter ---
+    vec2 defocusJitter = RandomPointInCircle(rngState) * DefocusStrength * uInvResolution.x;
+    vec2 divergeJitter = RandomPointInCircle(rngState) * DivergeStrength * uInvResolution.x;
+
+    // Offset origin for defocus 
+    vec3 camRight = uInvViewMatrix[0].xyz;
+    vec3 camUp = uInvViewMatrix[1].xyz;
+    rayOrigin += camRight * defocusJitter.x + camUp * defocusJitter.y;
+
+    // --- Compute ray direction ---
+    // Correct ray direction for diverge (anti-aliasing) along camera plane
+    vec3 jitteredTarget = worldPos + camRight * divergeJitter.x + camUp * divergeJitter.y;
+    vec3 rayDir = normalize(jitteredTarget - rayOrigin);
 
     // Trace the ray
     ccontrib[localThreadID] = Trace(rayOrigin, rayDir, rngState);
@@ -381,8 +381,8 @@ void main() {
         vec3 val = vec3(0.0);
 
         #pragma optionNV(unroll all)
-        for(int i = 0; i < RAYS_PER_PIXEL; i++)
-            val += ccontrib[i];
+        for(int i = 0; i < RAYS_PER_PIXEL; i += 4)
+            val += ccontrib[i + 0] + ccontrib[i + 1] + ccontrib[i + 2] + ccontrib[i + 3];
         
         val /= float(RAYS_PER_PIXEL); // Average contribution
         imageStore(outputImage, pixelCoord, vec4(val, 1.0));

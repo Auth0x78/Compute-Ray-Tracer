@@ -22,10 +22,10 @@ The project is actively under development. Many features are still being impleme
 * [x] SAH based BVH splitting
 * [ ] Support multiple models
 * [ ] Support multiple materials
-* [ ] Add movable camera
+* [x] Add movable camera
 * [ ] Add multiple light sources
 * [ ] Post-processing effects (e.g., tone mapping, gamma correction)
-* [ ] Performance optimizations
+* [x] Performance optimizations
 * [ ] UI for scene configuration
 
 ## Screenshots
@@ -56,7 +56,17 @@ make
 ./ComputeRayTracer
 ```
 
-* Program will the Path to your 3D model file.
+* Program will ask the Path to your 3D model file.
+
+## Controls
+
+* **W / A / S / D** – Move camera forward / left / backward / right
+* **Space** – Move camera up
+* **Left Ctrl** – Move camera down
+* **Mouse** – Look around (when cursor is locked)
+* **Tab** – Toggle mouse lock/unlock (enables/disables camera look)
+* **R** - Resets the FPS, frame count and elapsed time
+* **Esc** – Quit application
 
 ## Project Structure
 

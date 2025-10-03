@@ -338,12 +338,12 @@ int LoadModel(const char *modelPath, std::string internalModelName) {
   // TODO:
   // Give all model default RayTracingMaterial
   RayTracingMaterial &rtMat = g_modelsBuffer[modelIdx].material;
-  rtMat.color = glm::vec4(1.0f, 1.0f, 1.0f, 0.0f);
+  rtMat.color = glm::vec4(1.f, 1.f, 1.f, 0.f);
   rtMat.emissionColor = glm::vec4(0.0f);
   rtMat.specularColor = glm::vec4(1.0f);
 
   rtMat.emissionStrength = 0.0f;
-  rtMat.smoothness = 1.0f;
+  rtMat.smoothness = 0.0f;
   rtMat.specularProbability = 0.5f;
 
   rtMat.flag = 0;
@@ -364,6 +364,8 @@ int LoadModel(const char *modelPath, std::string internalModelName) {
   // Find the inverse
   g_modelsBuffer[modelIdx].worldToLocalMatrix =
       glm::inverse(g_modelsBuffer[modelIdx].localToWorldMatrix);
+
+  loader.~Loader();
 
   return modelIdx;
 }

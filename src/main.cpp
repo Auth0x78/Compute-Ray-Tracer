@@ -4,9 +4,7 @@
 
 #include <glm/glm.hpp>
 
-#include <imgui.h>
-#include <stb_image/stb_image.h>
-
+#include "Camera.h"
 #include "EBO.h"
 #include "ModelLoaderBVHBuilder.h"
 #include "SSBO.h"
@@ -163,8 +161,14 @@ int main(void) {
   double deltaT;
   double timeElapsed = 0;
 
+  Uint64 STARTC = SDL_GetPerformanceCounter();
+
   // Frame variables
   int frame = 0;
+
+  // Camera setup
+  glm::vec3 initialCameraPosition(0.0f, 0.0f, 5.0f);
+  Camera cam(pWindow, 45.0f, float(width) / height, 0.01f, 400.0f);
 
   bool running = true;
   while (running) {
@@ -184,13 +188,51 @@ int main(void) {
       case SDL_EVENT_WINDOW_RESIZED: {
         int newWidth = event.window.data1;
         int newHeight = event.window.data2;
+
+        // Update OpenGL viewport
         glViewport(0, 0, newWidth, newHeight);
         width = newWidth;
         height = newHeight;
-        break;
+
+        // Update camera projection (important!)
+        cam.SetAspect(float(width) / float(height));
+
+        // Recreate the compute output texture with new resolution
+        glDeleteTextures(1, &texture);
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0, GL_RGBA,
+                     GL_FLOAT, NULL);
+
+        // Rebind to image unit for compute shader
+        glBindImageTexture(0, texture, 0, GL_FALSE, 0, GL_WRITE_ONLY,
+                           GL_RGBA32F);
+
+        // Also update screen shader resolution uniform
+        shader.Activate();
+        shader.SetUniform2fv("uResolution", glm::vec2(width, height));
+        shader.Deactivate();
+
+        std::cout << "Resized to " << width << "x" << height << std::endl;
       } break;
+      case SDL_EVENT_KEY_DOWN:
+        if (event.key.repeat == 0 && event.key.scancode == SDL_SCANCODE_ESCAPE)
+          running = false;
+        else if (event.key.repeat == 0 &&
+                 event.key.scancode == SDL_SCANCODE_R) {
+          frame = 0;
+          timeElapsed = 0;
+        }
+        break;
+      default:
+        break;
       }
       // Handle other events as needed
+      cam.ProcessEvent(event);
     }
 
     LAST = NOW;
@@ -200,12 +242,20 @@ int main(void) {
     deltaT = (double)(NOW - LAST) / SDL_GetPerformanceFrequency();
     timeElapsed += deltaT;
 
+    // Process camera keyboard
+    cam.Update(deltaT);
+
     glClearColor(1.0, 0.3, 0.3, 1.0);
     glClear(GL_COLOR_BUFFER_BIT);
 
     // Update the compute shader uniforms
     computeShader.Activate();
+    computeShader.SetUniformMatrix4fv("uInvViewMatrix", cam.GetInvViewMatrix());
+    computeShader.SetUniformMatrix4fv("uInvProjectionMatrix",
+                                      cam.GetInvProjectionMat());
     computeShader.SetUniform2fv("uResolution", glm::vec2(width, height));
+    computeShader.SetUniform2fv("uInvResolution",
+                                glm::vec2(1.0f / width, 1.0f / height));
     computeShader.SetUniform1f("uTime", (float)timeElapsed);
     computeShader.SetUniform1i("uFrame", frame);
 
@@ -233,16 +283,19 @@ int main(void) {
     glDrawElements(GL_TRIANGLES, quadIndices.size(), GL_UNSIGNED_INT, 0);
     VAO1.Unbind();
 
-    // Print fps
-    std::cout << "Avg FPS: " << floor(frame / timeElapsed) << std::endl;
-    std::cout << "Current FPS: " << floor(1.0f / deltaT) << std::endl;
-
-    // Swap frame buffers
+    // Swap frames
     SDL_GL_SwapWindow(pWindow);
+
+    if (SDL_GetPerformanceCounter() - STARTC >=
+        2 * SDL_GetPerformanceFrequency()) {
+      std::cout << "FPS: " << floor(frame / timeElapsed) << std::endl;
+
+      // SET new STARTC to current time
+      STARTC = SDL_GetPerformanceCounter();
+    }
   }
 
-  // there is no need to call the clear function for the libraries since the os
-  // will do that for us. by calling this functions we are just wasting time.
+  // Cleanup code
   shader.Delete();
   SDL_GL_DestroyContext(glContext);
   SDL_DestroyWindow(pWindow);
