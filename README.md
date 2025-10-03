@@ -19,6 +19,7 @@ The project is actively under development. Many features are still being impleme
 * [x] Render with default baked material
 * [x] Ambient lighting
 * [x] Fixed camera setup
+* [ ] SAH based BVH splitting
 * [ ] Support multiple models
 * [ ] Support multiple materials
 * [ ] Add movable camera
