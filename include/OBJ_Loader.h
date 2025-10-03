@@ -755,7 +755,7 @@ private:
         if (i == 0) {
           pPrev = tVerts[tVerts.size() - 1];
         } else {
-          pPrev = tVerts[i - 1];
+          pPrev = tVerts[(size_t)i - 1];
         }
 
         // pCur = the current vertex;
@@ -766,7 +766,7 @@ private:
         if (i == tVerts.size() - 1) {
           pNext = tVerts[0];
         } else {
-          pNext = tVerts[i + 1];
+          pNext = tVerts[(size_t)i + 1];
         }
 
         // Check to see if there are only 3 verts left

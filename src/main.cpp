@@ -35,9 +35,9 @@ int main(void) {
 
   int width = 0, height = 0;
 
-  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS) < 0) {
+  if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS)) {
     printf("Could not initialize SDL: %s.\n", SDL_GetError());
-    return -1;
+    return 1;
   }
 
   SDL_Window *pWindow = SDL_CreateWindow(
@@ -134,7 +134,7 @@ int main(void) {
     std::string modelPath;
     std::cin >> modelPath;
     std::cout << "Loading model...\n";
-    if (LoadModel(modelPath.c_str(), "model") != -1) {
+    if (LoadModel(modelPath.c_str(), "model") == -1) {
       std::cout << "Failed to load model!" << std::endl;
       return 1;
     }

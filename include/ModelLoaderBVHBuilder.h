@@ -1,6 +1,6 @@
-#include <glm/gtc/constants.hpp> // for glm::radians
+#include <algorithm>
 #include <glm/gtc/matrix_transform.hpp>
-#include <optional>
+#include <unordered_map>
 #include <vector>
 
 #include "OBJ_Loader.h"
@@ -10,129 +10,247 @@
 #define MAX_SPLIT_DEPTH 32
 #define MIN_TRIANGLES_PER_NODE 2
 
-static std::unordered_map<std::string, int> s_modelMap;
+#define GRANULAR_SPLIT_TEST_BOUNDS 20
+#define SPLIT_TEST_MIN 4
+#define SPLIT_TEST_MAX 8
 
 std::vector<Model> g_modelsBuffer;
 std::vector<BVHNode> g_BVHBuffer;
 std::vector<Triangle> g_TrianglesBuffer;
 
+static std::unordered_map<std::string, int> s_modelMap;
 static int s_modelNodeOffset = 0;
 static int s_modelTriOffset = 0;
 
-void expandToFit(int idx, const glm::vec3 &point) {
+static struct AABB {
+  glm::vec3 min;
+  glm::vec3 max;
+
+  AABB()
+      : min(std::numeric_limits<float>::max()),
+        max(-std::numeric_limits<float>::max()) {}
+
+  void fitTris(const Triangle &tris) {
+    min = glm::min(min, tris.posA);
+    max = glm::max(max, tris.posA);
+
+    min = glm::min(min, tris.posB);
+    max = glm::max(max, tris.posB);
+
+    min = glm::min(min, tris.posC);
+    max = glm::max(max, tris.posC);
+  }
+
+  float costAABB(int numTris) const {
+    if (numTris == 0)
+      return 0.0f;
+
+    // If degenerate AABB
+    glm::vec3 d = max - min;
+    if (d.x <= 0.0f || d.y <= 0.0f || d.z <= 0.0f)
+      return 0.0f;
+
+    return numTris * (d.x * d.y + d.y * d.z + d.z * d.x);
+  }
+};
+
+static float NodeCost(float x, float y, float z, int numTris) {
+  if (numTris == 0)
+    return 0;
+  float area = x * y + y * z + z * x;
+  return area * numTris;
+}
+
+static void expandToFit(int idx, const glm::vec3 &point) {
   BVHNode &node = g_BVHBuffer[idx];
 
   node.boundsMin = glm::min(node.boundsMin, point);
   node.boundsMax = glm::max(node.boundsMax, point);
 }
 
-void expandToFitTris(int idx, const Triangle &triangle) {
+static void expandToFitTris(int idx, const Triangle &triangle) {
   expandToFit(idx, triangle.posA);
   expandToFit(idx, triangle.posB);
   expandToFit(idx, triangle.posC);
 }
 
-float costFunction() {
-  // TODO: Implement a cost function for SAH
-  return FP_NAN;
+static float EvaluateSplit(char splitAxis, float splitPos, int start,
+                           int count) {
+  int64_t numLeftTris = 0;
+  int64_t numRightTris = 0;
+  AABB leftAABB;
+  AABB rightAABB;
+
+  size_t end = (size_t)start + count;
+
+  for (size_t i = start; i < end; ++i) {
+    Triangle &tri = g_TrianglesBuffer[i];
+
+    float c = 0.0f;
+    switch (splitAxis) {
+    case 'X':
+      c = (tri.posA.x + tri.posB.x + tri.posC.x) / 3.0f;
+      break;
+    case 'Y':
+      c = (tri.posA.y + tri.posB.y + tri.posC.y) / 3.0f;
+      break;
+    default:
+      c = (tri.posA.z + tri.posB.z + tri.posC.z) / 3.0f;
+      break;
+    }
+
+    if (c < splitPos) {
+      leftAABB.fitTris(tri);
+      numLeftTris++;
+    } else {
+      rightAABB.fitTris(tri);
+      numRightTris++;
+    }
+  }
+
+  float costLeft = leftAABB.costAABB(numLeftTris);
+  float costRight = rightAABB.costAABB(numRightTris);
+
+  return costLeft + costRight;
 }
 
-void splitBVH(int relativeRootIndex, int depth = 0) {
-  // FOR NOW: Using split along longest axis
-  // TODO: Surface Area Heuristics
+static std::tuple<char, float, float> chooseSplit(const BVHNode &node,
+                                                  int start, int count) {
+  if (count <= 1)
+    return {'X', 0.0f, std::numeric_limits<float>::max()};
+  float sizeX = node.boundsMax.x - node.boundsMin.x;
+  float sizeY = node.boundsMax.y - node.boundsMin.y;
+  float sizeZ = node.boundsMax.z - node.boundsMin.z;
 
-  int rootIdx = s_modelNodeOffset + relativeRootIndex;
+  float bestSplitPos = 0.0f;
+  char bestSplitAxis = 'X';
+  int maxSplitTest =
+      count < GRANULAR_SPLIT_TEST_BOUNDS ? SPLIT_TEST_MIN : SPLIT_TEST_MAX;
 
-  if (depth >= MAX_SPLIT_DEPTH ||
-      g_BVHBuffer[rootIdx].triangleCount <= MIN_TRIANGLES_PER_NODE)
-    return;
+  float maxAxis = std::max({sizeX, sizeY, sizeZ});
+  float bestCost = std::numeric_limits<float>::max();
 
-  // Calculate extents
-  glm::vec3 center =
-      (g_BVHBuffer[rootIdx].boundsMin + g_BVHBuffer[rootIdx].boundsMax) * 0.5f;
-  float xExtent =
-      g_BVHBuffer[rootIdx].boundsMax.x - g_BVHBuffer[rootIdx].boundsMin.x;
-  float yExtent =
-      g_BVHBuffer[rootIdx].boundsMax.y - g_BVHBuffer[rootIdx].boundsMin.y;
-  float zExtent =
-      g_BVHBuffer[rootIdx].boundsMax.z - g_BVHBuffer[rootIdx].boundsMin.z;
+  // Estimate best split
+  for (char axis = 'X'; axis <= 'Z'; ++axis) {
+    float axisSize;
+    float axisMin;
 
-  // Find the longest axis
-  int axis = 0; // 0: x, 1: y, 2: z
-  {
-    float longest = xExtent;
-    if (yExtent > longest) {
-      axis = 1;
-      longest = yExtent;
+    switch (axis) {
+    case 'X':
+      axisSize = sizeX;
+      axisMin = node.boundsMin.x;
+      break;
+    case 'Y':
+      axisSize = sizeY;
+      axisMin = node.boundsMin.y;
+      break;
+    default:
+      axisSize = sizeZ;
+      axisMin = node.boundsMin.z;
+      break;
     }
-    if (zExtent > longest) {
-      axis = 2;
-      longest = zExtent;
-    }
-  }
 
-  g_BVHBuffer.emplace_back();
-  int leftIdx = g_BVHBuffer.size() - 1; // absolute address
+    int numSplitTests = ceil(axisSize / maxAxis * maxSplitTest);
+    numSplitTests = std::clamp(numSplitTests, 1, maxSplitTest);
 
-  g_BVHBuffer.emplace_back();
-  int rightIdx = g_BVHBuffer.size() - 1; // absolute address
+    for (int i = 0; i < numSplitTests; ++i) {
+      float splitT = (i + 1) / (numSplitTests + 1.0f);
+      float splitPos = axisMin + axisSize * splitT;
+      float cost = EvaluateSplit(axis, splitPos, start, count);
 
-  int numLeft = 0;
-  int trisRelativeStart = g_BVHBuffer[rootIdx].startIndex;
-
-  for (int i = s_modelTriOffset + trisRelativeStart;
-       i < s_modelTriOffset + trisRelativeStart +
-               g_BVHBuffer[rootIdx].triangleCount;
-       ++i) {
-    // Current triangle
-    const Triangle &tri = g_TrianglesBuffer[i];
-    glm::vec3 triCenter = (tri.posA + tri.posB + tri.posC) / 3.0f;
-
-    if (triCenter[axis] < center[axis]) {
-      expandToFitTris(leftIdx, tri);
-      std::swap(g_TrianglesBuffer[i],
-                g_TrianglesBuffer[(size_t)s_modelTriOffset + trisRelativeStart +
-                                  numLeft]);
-      numLeft++;
-    } else {
-      expandToFitTris(rightIdx, tri);
+      if (cost < bestCost) {
+        bestCost = cost;
+        bestSplitPos = splitPos;
+        bestSplitAxis = axis;
+      }
     }
   }
 
-  int numRight = g_BVHBuffer[rootIdx].triangleCount - numLeft;
-  int relativeLeftStart = trisRelativeStart;
-  int relativeRightStart = trisRelativeStart + numLeft;
+  return {bestSplitAxis, bestSplitPos, bestCost};
+}
 
-  assert(s_modelTriOffset + trisRelativeStart >= 0 &&
-         s_modelTriOffset + trisRelativeStart +
-                 g_BVHBuffer[rootIdx].triangleCount <=
-             (int)g_TrianglesBuffer.size());
-  if (numRight == 0 || numLeft == 0) {
-    // left is the same as the root, no use
-    g_BVHBuffer.pop_back(); // Remove right
-    g_BVHBuffer.pop_back(); // Remove left
-    return;
+static void splitBVH(int parentIndex, int trisGlobalStart, int triNum,
+                     int depth = 0) {
+  // Implemented splitting using SAH
+  BVHNode &parent = g_BVHBuffer[parentIndex];
+
+  float sizeX = parent.boundsMax.x - parent.boundsMin.x;
+  float sizeY = parent.boundsMax.y - parent.boundsMin.y;
+  float sizeZ = parent.boundsMax.z - parent.boundsMin.z;
+
+  float parentCost = NodeCost(sizeX, sizeY, sizeZ, parent.triangleCount);
+
+  auto &[splitAxis, splitPos, cost] =
+      chooseSplit(parent, trisGlobalStart, triNum);
+
+  if (cost < parentCost && depth < MAX_SPLIT_DEPTH) {
+    AABB leftAABB;
+    AABB rightAABB;
+    int numLeft = 0;
+
+    for (size_t i = trisGlobalStart; i < (size_t)trisGlobalStart + triNum;
+         ++i) {
+      Triangle tri = g_TrianglesBuffer[i];
+
+      float c = 0.0f;
+      switch (splitAxis) {
+      case 'X':
+        c = (tri.posA.x + tri.posB.x + tri.posC.x) / 3.0f;
+        break;
+      case 'Y':
+        c = (tri.posA.y + tri.posB.y + tri.posC.y) / 3.0f;
+        break;
+      default:
+        c = (tri.posA.z + tri.posB.z + tri.posC.z) / 3.0f;
+        break;
+      }
+
+      if (c < splitPos) {
+        leftAABB.fitTris(tri);
+        std::swap(g_TrianglesBuffer[i],
+                  g_TrianglesBuffer[(size_t)trisGlobalStart + numLeft]);
+        numLeft++;
+      } else {
+        rightAABB.fitTris(tri);
+      }
+    }
+
+    int numRight = triNum - numLeft;
+    int trisStartLeft = trisGlobalStart + 0;
+    int trisStartRight = trisGlobalStart + numLeft;
+
+    BVHNode childLeft;
+    childLeft.boundsMin = leftAABB.min;
+    childLeft.boundsMax = leftAABB.max;
+    childLeft.startIndex = trisStartLeft;
+    childLeft.triangleCount = numLeft;
+
+    // Push the bvh left node onto vector
+    int childLeftIndex = g_BVHBuffer.size();
+    g_BVHBuffer.push_back(childLeft);
+
+    BVHNode childRight;
+    childRight.boundsMin = rightAABB.min;
+    childRight.boundsMax = rightAABB.max;
+    childRight.startIndex = trisStartRight;
+    childRight.triangleCount = numRight;
+
+    // Push the bvh right node onto vector
+    int childRightIndex = g_BVHBuffer.size();
+    g_BVHBuffer.push_back(childRight);
+
+    // parent ref is may not be valid after pushing elements onto vector
+    g_BVHBuffer[parentIndex].startIndex = childLeftIndex;
+    g_BVHBuffer[parentIndex].triangleCount = -1;
+
+    // Recursively split the bvh node further
+    splitBVH(childLeftIndex, trisGlobalStart, numLeft, depth + 1);
+    splitBVH(childRightIndex, trisGlobalStart + numLeft, numRight, depth + 1);
   }
-
-  g_BVHBuffer[leftIdx].startIndex = relativeLeftStart;
-  g_BVHBuffer[leftIdx].triangleCount = numLeft; // Set as leaf node
-
-  g_BVHBuffer[rightIdx].startIndex = relativeRightStart;
-  g_BVHBuffer[rightIdx].triangleCount = numRight; // Seat as leaf node
-
-  // Mark Parent as a non-leaf node
-  g_BVHBuffer[rootIdx].startIndex =
-      leftIdx -
-      s_modelNodeOffset; // Point to first child relative to ModelNodeOffset
-  g_BVHBuffer[rootIdx].triangleCount = -1; // Mark current as non-leaf node
-
-  // Recursively Split the left & right child
-  splitBVH(leftIdx - s_modelNodeOffset, depth + 1);
-  splitBVH(rightIdx - s_modelNodeOffset, depth + 1);
 }
 
 // Make the top level BVH Node
-void makeRootBVH(int trisCount) {
+static void makeRootBVH(int trisCount) {
 
   // Make a BVH node
   g_BVHBuffer.emplace_back();
@@ -149,11 +267,11 @@ void makeRootBVH(int trisCount) {
   }
 
   // Split root into smaller BVH nodes
-  splitBVH(0);
+  // TODO: for multiple model the trisGlobalStart maybe not be 0 for all models
+  splitBVH(0, 0, trisCount);
 }
 
-// Return -1 if model failed to load, else model's position in the
-// g_modelsBuffer
+// Return -1 if model failed to load, else model's position in g_modelsBuffer
 int LoadModel(const char *modelPath, std::string internalModelName) {
   objl::Loader loader;
   bool loadout = loader.LoadFile(modelPath);
@@ -220,12 +338,12 @@ int LoadModel(const char *modelPath, std::string internalModelName) {
   // TODO:
   // Give all model default RayTracingMaterial
   RayTracingMaterial &rtMat = g_modelsBuffer[modelIdx].material;
-  rtMat.color = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
+  rtMat.color = glm::vec4(1.0f, 1.0f, 1.0f, 0.0f);
   rtMat.emissionColor = glm::vec4(0.0f);
   rtMat.specularColor = glm::vec4(1.0f);
 
   rtMat.emissionStrength = 0.0f;
-  rtMat.smoothness = 0.5f;
+  rtMat.smoothness = 1.0f;
   rtMat.specularProbability = 0.5f;
 
   rtMat.flag = 0;

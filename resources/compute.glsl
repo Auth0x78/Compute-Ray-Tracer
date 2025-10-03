@@ -380,7 +380,7 @@ void main() {
     if(localThreadID == 0) { 
         vec3 val = vec3(0.0);
 
-        //#pragma optionNV(unroll all)
+        #pragma optionNV(unroll all)
         for(int i = 0; i < RAYS_PER_PIXEL; i++)
             val += ccontrib[i];
         
