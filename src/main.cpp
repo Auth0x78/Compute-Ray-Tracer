@@ -128,7 +128,7 @@ int main(void) {
   {
     Uint64 startTime = SDL_GetPerformanceCounter();
 
-    std::cout << "Give filepath of model to load: ";
+    std::cout << "Give filepath of model to load(.obj only): ";
     std::string modelPath;
     std::cin >> modelPath;
     std::cout << "Loading model...\n";
