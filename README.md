@@ -8,8 +8,7 @@
 * **Single Model Support**: Load and render one 3D model at a time.
 * **Baked Material**: Uses a default material applied to the model.
 * **Ambient Lighting**: Currently supports one global ambient light source.
-* **Fixed Camera**: Predefined camera setup for consistent renders.
-* **High-Quality Output**: Render images with realistic shading and shadows.
+* **Semi high-Quality Output**: Render images with realistic shading and shadows.
 
 ## Current Status & TODO
 
